@@ -1,0 +1,664 @@
+--Author : K.J. Aris
+--Version : 14.01.03.
+--NPC : 108705
+--Script : 703135
+
+--Note : this NPC is using as a controller
+
+local _Lua_703135_AI_GlobalVars = {};
+
+function Lua_703135_AI_Init( _inputCtrID )--controller  NPC 108705
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_Init : NPC 108705       Z32B2  V140120 " );
+
+	--Lua_DavisDelObj( 108705 );--delete all kind , just incase --以防重複執行 將原有控制器刪除
+
+	--basics
+	local _ctrlID = _inputCtrID or OwnerID();
+	local _roomID = ReadRoleValue( _ctrlID , EM_RoleValue_RoomID );
+
+	-------------------------------------------initialize settings
+	--this NPC is using as a controller
+	SetModeEx( _ctrlID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _ctrlID , EM_SetModeType_HideName , false );	--不顯示名稱
+	SetModeEx( _ctrlID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _ctrlID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _ctrlID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _ctrlID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _ctrlID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _ctrlID , EM_SetModeType_Obstruct , false );	--無阻擋效果
+
+	--AddBuff(  _bossID , 625400 , 0 , -1 );--625400蝕魂詛咒  定身用
+
+	local _zoneID = ReadRoleValue( _ctrlID , EM_RoleValue_ZoneID );
+	local _difficulty = 1;
+	local _frenzyCD = 480;
+	if ( _zoneID == 170 ) then
+		_difficulty = 2;
+		_frenzyCD = 360;
+	end
+
+	if ( _zoneID == 171 ) then
+		_difficulty = 3;
+		_frenzyCD = 9999999;
+	end
+	
+
+	--請依難易度順序放置
+	local _captainGUIDs = { 108684 , 108880 ,108886 };
+	local _cunningJailerGUIDs  = {108660 , 108875 , 108881 };--108660狡詐的獄卒
+	local _toughJailerGUIDs  = { 108661 , 108876 , 108882 };--108661強壯的獄卒
+	local _bruteCubGUIDs  = { 108663 , 108878 , 108884 };--108663魯莽的庫柏
+	local _doorGuardGUIDs  = { 108662 , 108877 , 108883 };--108662黑牢門衛
+	local _InterrogatorGUIDs = { 108664 , 108879 , 108885 };--108664黑牢拷問者
+
+	local _treasureBoxGUIDs = { 108616 , 106154 , 106155 };--黑牢密儲箱
+
+	--參數設定表
+	local _currentGameLevel = 0;--default
+	
+	_Lua_703135_AI_GlobalVars[ _roomID ] = {
+					_bossID = 0 , 
+					_roomID = _roomID ,
+					_ctrlID = _ctrlID ,
+					_frontDoorID = 0 , 
+					_backDoorID = 0 , 
+					
+					_effectiveRange = 350 , 
+
+					_ctrlGUID = 108705 ,--控制器ID
+					_captainGUID = _captainGUIDs[ _difficulty ] , --108684馬薩里隊長
+					_doorGUID = 106249 , 
+					_backDoorGUID = 107856  , --107856
+					_lockGUID = 123511 , --開鎖機關
+					_keyItemGUID = 123515 ,--解鎖符文
+
+					_cunningJailerGUID = _cunningJailerGUIDs[ _difficulty ] ,--lv1狡詐的獄卒
+					_toughJailerGUID = _toughJailerGUIDs[ _difficulty ] ,--lv1強壯的獄卒
+					_bruteCubGUID = _bruteCubGUIDs[ _difficulty ] ,--lv2魯莽的庫柏
+					_doorGuardGUID = _doorGuardGUIDs[ _difficulty ] ,--lv3黑牢門衛
+					_InterrogatorGUID = _InterrogatorGUIDs[ _difficulty ] ,--lv4黑牢拷問者
+					
+					_treasureBoxGUID = _treasureBoxGUIDs[ _difficulty ] ,--黑牢密儲箱
+
+					_flagGUID = 781402 , --781343 , 
+					_captainFlagPos = 9 , 
+					_frontDoorFlagPos = 6 , 
+					_monsterSpawnPos = 7 , 
+					_backDoorFlagPos = 8 ,
+					
+					_lockIDs = {} , --lock物件ID 與其 對應的lock BUFF		objID = lockBuffID
+					_maxLock = 5;
+					_lock_n_key_Buffs = { [625448] = 625443 , [625449] = 625444 , [625450] = 625445 , [625451] = 625446 , [625452] = 625447 } , ----lock 與 key 的對應BUFF    lockBuffID = keyBuffID
+					_keyBuffs = { 625443 , 625444 , 625445 , 625446 , 625447 } ,--解鎖符文....etc.解鎖用BUFF 順序對應階段
+					
+					_completedGameLevel = _currentGameLevel ,--總共已完成的遊戲階段
+
+					ExtObj = nil , 
+					DelExtObjs = nil , 
+
+					_frenzyCD = _frenzyCD ,
+
+					_mobInterval = 10 ,--每10秒出一次小怪
+					_levelInterval = 90 ,--每90秒進入下一個階段
+					_keyInterval = 20 ,--新階段開始之後20秒會出現解鎖符文
+					_toNextLevelInterval = 10 ,--停止出怪過10秒後會進入下一個新階段
+
+					_mobGroup = nil--出怪表
+
+					
+					};
+	--唯讀資訊
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];
+
+	--產生 馬薩里隊長
+	local x,y,z,dir = DW_Location( _gConsts._flagGUID , _gConsts._captainFlagPos );
+	local _captainID = WY_Create_an_obj( _gConsts._captainGUID , x,y,z,dir );--108684馬薩里隊長
+	_Lua_703135_AI_GlobalVars[ _roomID ]._bossID = _captainID;--馬薩里隊長
+
+	SetDefIdleMotion( _captainID , ruFUSION_MIME_DAZED );
+	SetModeEx( _captainID , EM_SetModeType_Obstruct , true);
+	SetModeEx( _captainID , EM_SetModeType_Fight , true );
+	SetModeEx( _captainID , EM_SetModeType_Move , false );
+	SetModeEx( _captainID , EM_SetModeType_Searchenemy , false);
+	SetModeEx( _captainID , EM_SetModeType_Strikback , false);
+
+	SetPlot( _captainID , "range" , "Lua_703135_AI_onFight" , 50 );
+
+	WriteRoleValue( _captainID , EM_RoleValue_Register1 , _currentGameLevel );--0為原值  !0則 為完成階段--同步
+
+	DelObj( _ctrlID );
+
+
+		--階段產怪表
+	--相同類型怪物數量在個別的INIT FUNCTION 內設定
+	local _mobGroup = {--ID = default target		--targetID = 0 : random target
+			{ [tonumber( _gConsts._cunningJailerGUID )] = _captainID , [tonumber( _gConsts._toughJailerGUID )] = _captainID } , 
+			{ [tonumber( _gConsts._bruteCubGUID )] = -2 } , --小於0則代表為數量
+			{ [tonumber( _gConsts._doorGuardGUID )] = 0 } , 
+			{ [tonumber( _gConsts._InterrogatorGUID )] = 0 } , 
+			{ [tonumber( _gConsts._cunningJailerGUID )] = _captainID , [tonumber( _gConsts._toughJailerGUID )] = _captainID , [tonumber( _gConsts._bruteCubGUID )] = 0 , [tonumber( _gConsts._doorGuardGUID )] = 0 , [tonumber( _gConsts._InterrogatorGUID )] = 0 }
+		}
+
+	_Lua_703135_AI_GlobalVars[ _roomID ]._mobGroup = _mobGroup;
+
+	--產生後門
+	_Lua_703135_AI_GlobalVars[ _roomID ]._backDoorID = Lua_703182_AddDoor( _gConsts._backDoorGUID , _gConsts._flagGUID , _gConsts._backDoorFlagPos , _gConsts._roomID );
+	DebugMsg( 0 , 0 , "--Back Door ID : ".._Lua_703135_AI_GlobalVars[ _roomID ]._backDoorID );
+	return _roomID;
+end--function Lua_703135_AI_Init( _inputCtrID )
+
+
+function Lua_703135_AI_onFight()
+	local _bossID = TargetID();
+	local _roomID = ReadRoleValue( _bossID , EM_RoleValue_RoomID );
+
+	SetPlot( _bossID , "range" , "" , 0 );
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_onFight ".._bossID.." RID : ".._roomID );
+
+	--控制器與衍伸物件
+	local _ctrlID , _AddParasite , _RemoveParasites  = Lua_703182_ExtendObjectClosure( _bossID );
+
+	local function CreateDerivativeOnBoss( _objOriID , _x , _y , _z , _dir )	--衍生物(處理招喚物 或 長出來的東西)
+		local x,y,z,dir = DW_Location( _bossID );
+		local _objID = CreateObj( _objOriID , _x or x , _y or y , _z or z , _dir or dir , 1 );
+		_AddParasite( _objID );
+		AddToPartition( _objID , _roomID );
+		return _objID;
+	end
+	
+	_Lua_703135_AI_GlobalVars[ _roomID ]._ctrlID = _ctrlID;
+	_Lua_703135_AI_GlobalVars[ _roomID ].ExtObj = CreateDerivativeOnBoss;
+	_Lua_703135_AI_GlobalVars[ _roomID ].DelExtObjs = _RemoveParasites;
+
+	DebugMsg( 0 , 0 , "--Ctrl ".._ctrlID );
+	--唯讀資訊
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];
+
+	-----------------------------------------------產生 符紋鎖
+	local _objID = 0;
+	local _lockFlagPos = { 1 , 2 , 3 , 4 , 5 };
+	_lockFlagPos = KJ_28BOSS3_SC_Hash_Shuffle( _lockFlagPos );
+	local _step = 1;
+	for _lockBuffID , _keyBuffID in pairs( _gConsts._lock_n_key_Buffs ) do
+		x,y,z,dir = DW_Location( _gConsts._flagGUID , _lockFlagPos[ _step ] );
+		_objID = CreateDerivativeOnBoss( _gConsts._lockGUID , x,y,z,dir );
+		AddBuff( _objID , _lockBuffID , 0 , -1 );
+		SetPlot( _objID , "touch" , "Lua_703135_Trap_Unlock" , 10 );
+		--table.insert( _Lua_703135_AI_GlobalVars[ _roomID ]._lockIDs , _objID );
+		_Lua_703135_AI_GlobalVars[ _roomID ]._lockIDs[ _objID ] = _lockBuffID;--寫進清單內  以方便查詢
+		DebugMsg( 0 , 0 , "--Lock : ".._lockFlagPos[ _step ].."    ID : ".._objID );
+		--_lockFlagPos = KJ_28BOSS3_SC_Hash_Shuffle( _lockFlagPos );
+		_step = _step + 1;
+	end
+	--_Lua_703135_AI_GlobalVars[ _roomID ]._maxLock = _step;
+	DebugMsg( 0 , 0 , "--Ctrl ".._ctrlID );
+
+
+	--generate front door
+
+	_Lua_703135_AI_GlobalVars[ _roomID ]._frontDoorID = Lua_703182_AddDoor( _gConsts._doorGUID , _gConsts._flagGUID , _gConsts._frontDoorFlagPos , _gConsts._roomID );
+
+	BeginPlot( _ctrlID , "Lua_703135_AI_Engage" , 0 );
+
+	ScriptMessage(_bossID,0,2,"[$MUTE]".."[SC_108684_ENGAGE]",0);
+
+end--function Lua_703135_AI_onFight()
+
+
+function Lua_703135_AI_Engage()
+	local _roomID = ReadRoleValue( OwnerID() , EM_RoleValue_RoomID );--OwnerID在這裡指CTRLID
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_Engage" );
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];
+	local _bossID = _gConsts._bossID;--_captainID
+	local _roomID = _gConsts._roomID;
+	local _ctrlID = _gConsts._ctrlID;
+
+	--Routines Vars
+	local _clock = 0;
+	local _availableTargetPlayer = nil;--hash list
+	local _engaging = true;
+	--Routines Vars
+		--Lua_RandomPlayerFromHateList
+	
+	local _timeTick = 1;--Time Speed
+	local _miniTimeTick = _timeTick*10;--Time Speed for Sleep
+	--local _GCD = 0;--int
+
+	--local _fury_course = false;
+	
+	
+	local _CD = {
+		_mobTimer = _gConsts._mobInterval ,--每10秒出一次小怪
+		_levelTimer = _gConsts._levelInterval ,--每90秒進入下一個階段
+		_keyTimer = _gConsts._keyInterval ,--新階段開始之後20秒會出現解鎖符文
+		_toNextLevelTimer = _gConsts._toNextLevelInterval --停止出怪過10秒後會進入下一個新階段
+		}
+
+	local function CreateLevelMob( _inputCurrentLevel , _inputPlayerList )--產出階段怪物
+		_inputPlayerList = _inputPlayerList or nil;
+		local _mobFormula = _gConsts._mobGroup[ _inputCurrentLevel ];--取出當前階段配方表
+		local _monsterID = 0;
+		local _monsterNum = 1;
+		local x,y,z,dir = 0;
+		for _monsterGUID , _attackTarget in pairs( _mobFormula ) do
+			_monsterNum = 1;--當_attackTarget > 0時 每一種ID只出一隻怪
+			if ( _attackTarget < 0 ) then
+				_monsterNum = math.abs( _attackTarget );
+			end
+
+			for i = 1 , _monsterNum , 1 do
+				x,y,z,dir = DW_Location( _gConsts._flagGUID , _gConsts._monsterSpawnPos );
+				x = x + ( RandRange( 1 , 40 ) - 20 );
+				z = z + ( RandRange( 1 , 40 ) - 20 );
+
+				_monsterID = _gConsts.ExtObj( _monsterGUID , x,y,z,dir );
+
+				if ( _attackTarget <= 0 and _inputPlayerList ~= nil )then--若目標ID為0   則由玩家清單中隨機挑選
+					_attackTarget = _inputPlayerList[ RandRange( 1 , #_inputPlayerList ) ];
+				end
+
+				--x,y,z,dir = DW_Location( _attackTarget );
+				SetFollow( _monsterID , _attackTarget );
+				--Move( _monsterID , x,y,z );
+				SetAttack( _monsterID , _attackTarget );
+			end
+			
+		end
+
+	end
+	--_CD._keyTimer = 9999999;--出鑰匙時間先鎖起來
+
+
+	-----------------------------------------狂暴參數
+	local _fury_course = false;
+	local _fury_CD = _gConsts._frenzyCD;
+	----------------------------END----------狂暴參數
+
+
+	DebugMsg( 0 , 0 , "--Start loop" );
+	local _currentGameLevel = 1;--目前遊戲階段
+	local _currentCompletedGameLevel = 0;
+	while true do 
+		--------------------clock
+		Sleep( _miniTimeTick );
+		_clock = _clock + _timeTick;
+		--------------END---clock
+		--DebugMsg( 0 , 0 , "--Clock : ".._clock );
+
+		--------------------Routines
+		_availableTargetPlayer = LUA_YOYO_RangePlayerNotGM_EX( _bossID , _gConsts._effectiveRange , true ); --抓取自己距離_effectiveRange的存活玩家，排除GM--702774
+		_engaging = #_availableTargetPlayer ~= 0;
+
+		_currentCompletedGameLevel = ReadRoleValue( _bossID , EM_RoleValue_Register1 );
+		--------------END---Routines
+
+		-------------------------------------------------戰鬥結束條件
+		if ( CheckID( _bossID ) == false ) or ( ReadRoleValue( _bossID , EM_RoleValue_IsDead ) == 1 ) then -- boss 死亡時 任務失敗
+			DebugMsg(0,0,"------Captain is dead !!  ".._bossID );
+			Lua_703135_SweepAllRelativeBuff( _bossID , _gConsts._effectiveRange + 1000 , _gConsts._keyBuffs );--清除區域玩家所有相關BUFF
+			Lua_703135_AI_Reset( _roomID );
+			break;
+		end
+
+		if ( not _engaging ) then--都沒有存活玩家時 任務失敗
+			DebugMsg( 0 , 0 , "--quit fight" );
+			Lua_703135_SweepAllRelativeBuff( _bossID , _gConsts._effectiveRange + 1000 , _gConsts._keyBuffs );--清除區域玩家所有相關BUFF
+			Lua_703135_AI_Reset( _roomID );
+			break;
+		end
+		
+		if ( _currentGameLevel > _gConsts._maxLock ) then--最多_maxLock階段
+			_currentGameLevel = _gConsts._maxLock;
+			DebugMsg( 0 , 0 , "--階段結束 檢查階段是否完成 ".._currentCompletedGameLevel.." : ".._currentGameLevel );
+			
+			Lua_703135_SweepAllRelativeBuff( _bossID , _gConsts._effectiveRange + 1000 , _gConsts._keyBuffs );--清除區域玩家所有相關BUFF
+			if( _currentCompletedGameLevel >= _currentGameLevel )then--若所有階段完成  則挑戰成功
+				Lua_703135_AI_Conquered( _roomID );
+			else
+				Lua_703135_AI_Reset( _roomID );--若未完成則重設
+			end
+
+			break;
+		end
+
+		-------------------------------------END--------戰鬥結束條件
+
+
+		-------------------------------------------------Timers
+		--if ( _GCD > 0 ) then _GCD = _GCD - _timeTick; end
+
+		for _key , _value in pairs( _CD ) do
+			--DebugMsg( 0 , 0 , "-- : ".._key.." __ ".. _value );
+			if ( _CD[ _key ] > 0 ) then _CD[ _key ] = _value - _timeTick; end
+		end
+		---------------------------------------END-------Timers
+
+
+		--狂暴機制
+		if ( _clock >= _fury_CD ) then
+				fury_course=true;
+				--AddBuff( _bossID , 625441 , 0 , -1 );-- 625441 忘卻幽影
+				DebugMsg( 0 , 0 , "-----狂狂暴----captain must die" );
+				ScriptMessage(_bossID,0,2,"[$MUTE]".."[SC_108684_RAID]",0);
+				KillID( _bossID , _bossID );--captain must die
+				--lua_28in_Boss5_broadcast(2,"[SC_28IN_BOSS3_FURY]",0);--[107966]感受到巢穴的低鳴，開始陷入某種瘋狂狀態！
+		end		
+
+		
+		if ( _currentCompletedGameLevel > _currentGameLevel - 1 ) then -- 當_bossID.EM_RoleValue_Register1不為0時 為開鎖階段--則強迫遊戲轉換階段
+			_Lua_703135_AI_GlobalVars[ _roomID ]._completedGameLevel = _currentCompletedGameLevel;--同步記錄數值
+			if( _currentGameLevel <= _gConsts._maxLock ) then
+				_currentGameLevel = _currentGameLevel + 1;--強迫遊戲轉換階段			
+				DebugMsg( 0 , 0 , "--------階段完成-------進入階段 ".._currentGameLevel.."  已完成 : ".._currentCompletedGameLevel );
+			end
+			_CD._keyTimer = _gConsts._keyInterval;--新階段開始之後20秒會出現解鎖符文
+			_CD._levelTimer = _gConsts._levelInterval;----每90秒進入下一個階段
+			--停止出怪過10秒後會進入下一個新階段
+			_CD._toNextLevelTimer = _gConsts._toNextLevelInterval;--階段轉換間格時間--解完鎖會停止出怪  過10秒後會進入下一個新階段 
+			_CD._mobTimer = 0;--強迫下一個階段開始時直接出怪
+		end
+
+		--階段 產怪 鑰匙 機制
+		for i = 1 , 1 , 1 do--switch case simulation	--模擬 switch case 
+			if ( _CD._toNextLevelTimer > 0 ) then break; end	--當GCD鎖住時不執行	--GCD用來防止招式被吃掉
+
+			
+			if( _CD._mobTimer <= 0 )then--每10秒出一次怪
+				DebugMsg( 0 , 0 , "--出階段 ".._currentGameLevel.." 怪" );
+				CreateLevelMob( _currentGameLevel , _availableTargetPlayer );
+				_CD._mobTimer = _gConsts._mobInterval;
+			end
+			
+
+			if( _CD._keyTimer <= 0 )then
+				local x,y,z,dir = DW_Location( _gConsts._flagGUID , _gConsts._captainFlagPos );
+				x = x + ( RandRange( 1 , 200 ) - 100 );
+				z = z + ( RandRange( 1 , 200 ) - 100 );
+				local _keyItemID = _gConsts.ExtObj( _gConsts._keyItemGUID , x,y,z,dir );--則掉落相關KEY物件
+				--AddBuff( _keyItemID , _gConsts._keyBuffs[ _currentGameLevel ] , 0 , -1 );--BUFF轉移到鑰匙上
+				WriteRoleValue( _keyItemID , EM_RoleValue_Register1 , _gConsts._keyBuffs[ _currentGameLevel ] );
+				DebugMsg( 0 , 0 , "--出階段 ".._currentGameLevel.." 鑰匙" );
+				_CD._keyTimer = 9999999;--鑰匙出完後鎖起來  直到下次階段再倒數20秒
+
+				local _message = "[SC_108684_04]";--鑰匙出現了
+				ScriptMessage( _bossID , 0 , 2 , _message , 0 );
+
+			end
+
+
+			if( _CD._levelTimer <= 0 )then----每90秒進入下一個階段
+				--if( _currentGameLevel < _gConsts._maxLock ) then
+					_currentGameLevel = _currentGameLevel + 1;
+					DebugMsg( 0 , 0 , "------------------------進入階段 ".._currentGameLevel );
+				--end
+				_CD._keyTimer = _gConsts._keyInterval;--新階段開始之後20秒會出現解鎖符文
+				_CD._levelTimer = _gConsts._levelInterval;----每90秒進入下一個階段
+				--停止出怪過10秒後會進入下一個新階段
+				_CD._toNextLevelTimer = _gConsts._toNextLevelInterval;--階段轉換間格時間--解完鎖會停止出怪  過10秒後會進入下一個新階段 
+				_CD._mobTimer = 0;--強迫下一個階段開始時直接出怪
+
+				local _message = "[SC_108684_03]";--階段轉換   敵人越來越難應付了  提醒玩家加快腳步
+				ScriptMessage( _bossID , 0 , 2 , _message , 0 );
+			end	
+
+		end
+
+
+	end
+	DebugMsg( 0 , 0 , "--Out of loop" );
+	
+end--function Lua_703135_AI_Engage()
+
+--++++++++++++++++++++++++++++++++++++++++++++++++++++++++++functions with shared values
+function Lua_703135_AI_Reset( _roomID )
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_Reset" );
+
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];
+	
+	local _bossID = _gConsts._bossID;
+	local _roomID = _gConsts._roomID;
+	--local _ctrlID = _gConsts._ctrlID;
+	local _frontDoorID = _gConsts._frontDoorID;
+
+	ScriptMessage(_bossID,0,2,"[$MUTE]".."[SC_108684_RESET]",0);
+	Delobj( _frontDoorID );	--刪除前門
+	_gConsts.DelExtObjs();--clear all extend items
+
+	Sleep( 20 );
+
+	DelObj( _bossID );
+
+	Sleep( 50 );
+
+	local _ctrl = CreateObjByFlag( _gConsts._ctrlGUID , _gConsts._flagGUID , 0 , 1 );
+	AddToPartition( _ctrl , _roomID );
+	
+end--function Lua_703135_AI_Reset( _roomID )
+
+function Lua_703135_AI_Conquered( _roomID )
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_Conquered" );
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];--for read
+
+	Delobj( _gConsts._frontDoorID );	--刪除前門
+	Delobj( _gConsts._backDoorID );	--刪除後門
+
+	ScriptMessage(_gConsts._ctrlID,0,2,"[$MUTE]".."[SC_108684_DEATH]",0);	
+
+	local _captainID = _gConsts._bossID;
+	local _message = " Captain has been rescued !! ";
+	--ScriptMessage( _captainID , -1 , 2 , _message , 0 );
+
+	DelObj( _captainID );
+
+	local x,y,z,dir = DW_Location( _captainID );
+	local _loot  = WY_Create_an_obj( _gConsts._treasureBoxGUID , x,y,z,dir );
+
+	SetModeEx( _loot , EM_SetModeType_ShowRoleHead , false );
+	
+	SetModeEx( _loot , EM_SetModeType_Mark , true );	--不可點選
+	SetModeEx( _loot , EM_SetModeType_HideName , true );	--不顯示名稱
+	SetModeEx( _loot , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _loot , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _loot , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _loot , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _loot , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _loot , EM_SetModeType_Obstruct , true );	--有阻擋效果
+
+	
+	_gConsts.DelExtObjs();	--clear all extend items
+	_Lua_703135_AI_GlobalVars[ _roomID ] = nil;	--clear all values
+	
+	Lua703045_Z32D_BossKilled_Check( _captainID );
+end--function Lua_703135_AI_Conquered( _roomID )
+
+
+function Lua_703135_SweepAllRelativeBuff( _inputBossID , _inputSweepRange , _inputKeyBuffs )--_gConsts._effectiveRange + 1000 --清除區域玩家所有相關BUFF
+	local _availableTargetPlayer = LUA_YOYO_RangePlayerNotGM_EX( _inputBossID , _inputSweepRange , true );
+	for _index , _playerID in pairs( _availableTargetPlayer ) do--清除所有玩家相關符文
+		for _index , _BuffID in pairs( _inputKeyBuffs ) do
+			CancelBuff_NoEvent( _playerID , _BuffID );
+		end
+	end
+end--function Lua_703135_SweepAllRelativeBuff()
+
+
+
+-----------------------------------sub functions
+function Lua_703135_AddDoor( _FlagPos , _roomID , _inputDoorGUID )
+	--DebugMsg(0,0,"--Lua_703135_AddDoor  ".._FlagPos.." : ".._roomID.." : ".._inputDoorGUID );
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];
+	local _bossID = _gConsts._bossID;
+	local _roomID = _gConsts._roomID;
+	local _flagGUID = _gConsts._flagGUID;
+	local _doorGUID = _inputDoorGUID or _gConsts._doorGUID;
+	local _doorID = CreateObjByFlag( _doorGUID , _flagGUID , _FlagPos , 1 );
+	SetModeEx( _doorID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _doorID , EM_SetModeType_HideName , true );	--不顯示名稱
+	SetModeEx( _doorID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _doorID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _doorID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _doorID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _doorID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _doorID , EM_SetModeType_Obstruct , true );	--有阻擋效果
+	AddToPartition( _doorID , _roomID );
+	return _doorID;
+end--function Lua_703135_AddDoor( _FlagPos , _roomID )
+
+
+
+-----------------------------------------------符文鎖
+function Lua_703135_Item_Key_Init()--掉在場景上時
+	local _ownerID = OwnerID();--符文石本身
+	DebugMsg( 0 , 0 , "--Lua_703135_Item_Key_Init : ".._ownerID );
+	SetPlot( _ownerID , "touch" , "Lua_703135_Item_Key_Taken" , 10 );
+end
+
+function Lua_703135_Item_Key_Taken()
+	local _ownerID = OwnerID();--拾取者
+	local _targetID = TargetID();--符文石本身
+	DebugMsg( 0 , 0 , "--Lua_703135_Item_Key_Taken : ".._targetID );
+--	local Count = BuffCount( _ownerID );-- 查詢符文石的BUFF
+--	local _BuffID = 0;
+--	for i = 0 , Count , 1 do
+--		_BuffID = BuffInfo( _ownerID , i , EM_BuffInfoType_BuffID );
+--		AddBuff( _targetID , _BuffID , 0 , -1 );--轉移BUFF
+--	end
+	local _keyBuffID = ReadRoleValue( _targetID , EM_RoleValue_Register1 );
+	AddBuff( _ownerID , _keyBuffID , 0 , -1 );
+	DelObj( _targetID );--被拿走消失
+end
+
+
+function Lua_703135_Item_KeyDrop()--死亡時掉落
+	local _ownerID = OwnerID();--帶鑰匙死亡的人
+	DebugMsg( 0 , 0 , "--Lua_703135_Item_KeyDrop : ".._ownerID );
+	local _roomID = ReadRoleValue( _ownerID , EM_RoleValue_RoomID );
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];--global values
+
+	local x,y,z,dir = DW_Location( _ownerID );
+
+	local _keyBuffs = _gConsts._keyBuffs;--{ 625443 , 625444 , 625445 , 625446 , 625447 };--火焰符文....etc.
+
+	local _keyItemID = 0;
+	for _index , _BuffID in pairs( _keyBuffs ) do
+		if ( CheckBuff( _ownerID , _BuffID ) ) then--當亡者身上有相關BUFF時
+			_keyItemID = _gConsts.ExtObj( _gConsts._keyItemGUID , x,y,z,dir );--則掉落相關KEY物件
+			--AddBuff( _keyItemID , _BuffID );--BUFF轉移到鑰匙上
+			WriteRoleValue( _keyItemID , EM_RoleValue_Register1 , _BuffID );
+			CancelBuff_NoEvent( _ownerID , _BuffID );
+			DebugMsg( 0 , 0 , "--掉落了 : ".._BuffID );
+		end
+	end
+
+	if ( _keyItemID == 0 ) then
+		DebugMsg( 0 , 0 , "沒有鑰匙可掉" );
+	end
+	
+end
+
+
+function Lua_703135_Trap_Unlock()
+	local _ownerID = OwnerID();--開鎖者
+	local _targetID = TargetID();--機關鎖
+	DebugMsg( 0 , 0 , "--Lua_703135_Trap_Unlock : ".._ownerID.." opening ".._targetID );
+	local _roomID = ReadRoleValue( _ownerID , EM_RoleValue_RoomID );
+	local _gConsts = _Lua_703135_AI_GlobalVars[ _roomID ];--global values
+	local _bossID = _gConsts._bossID;--_captainID
+
+	local _lock_n_key_Buffs = _gConsts._lock_n_key_Buffs;--取出 鎖-匙 對應清單
+
+	local _Count = BuffCount( _targetID );	-- 查詢機關鎖身上的LOCKBUFF
+	local _thisLockBuffID = 0;
+	for i = 0 , _Count , 1 do
+		_thisLockBuffID = BuffInfo( _targetID , i , EM_BuffInfoType_BuffID );
+		if _lock_n_key_Buffs[ _thisLockBuffID ] ~= nil then
+			break;
+		end
+		_thisLockBuffID = 0;
+	end
+
+	if ( _thisLockBuffID ~= 0 ) then--當有查詢到相關的BUFF
+		local _playerKeyBuffID = _lock_n_key_Buffs[ _thisLockBuffID ];--玩家應該要有的keyBuffID
+		if ( CheckBuff( _ownerID , _playerKeyBuffID ) ) then--若有可開的BUFF 則開鎖成功
+			CancelBuff_NoEvent( _ownerID , _playerKeyBuffID );
+			--local _message = GetName( _ownerID ).." has unlock a lock !";
+			local _message = "[$MUTE]"..GetName( _ownerID ).."[SC_108684_01]"..GetName( _thisLockBuffID );--XXX已經解開了OO結界鎖
+			ScriptMessage( _targetID , -1 , 2 , _message , 0 );
+			local _completedGameLevel = ReadRoleValue( _bossID , EM_RoleValue_Register1 );
+			_completedGameLevel = _completedGameLevel + 1;
+			WriteRoleValue( _bossID , EM_RoleValue_Register1 , _completedGameLevel );--強迫遊戲轉換階段
+			DelObj( _targetID );
+			DebugMsg( 0 , 0 , "---unlock success !!" );
+		else
+			--ScriptMessage( _targetID , _ownerID , 2 , " you have no idea with this lock without a compatible key !! " , 0 );
+			local _message = "[$MUTE]".."[SC_108684_02]";
+			ScriptMessage( _targetID , _ownerID , 2 , _message , 0 );
+			DebugMsg( 0 , 0 , "---unlock deny !!" );
+		end
+	end
+
+end--function Lua_703135_Trap_Unlock()
+
+--/gm ? pcall ic_AddBuff(625443)
+-----------------------------------END---------符文鎖
+
+
+
+
+
+-------------------------------------------------------------------------------------------小怪技能
+-- _cunningJailerGUIDs  = {108660 }--108660狡詐的獄卒
+-- _toughJailerGUIDs  = { 108661 }--108661強壯的獄卒
+-- _bruteCubGUIDs  = { 108663 }--108663魯莽的庫柏
+-- _doorGuardGUIDs  = { 108662 }--108662黑牢門衛
+-- _InterrogatorGUIDs = { 108664 }--108664黑牢拷問者
+
+------------------------------狡詐的獄卒+強壯的獄卒
+function Lua_703135_AI_Jailer_TypeA_Init()--可控場、不吃仇恨 的類型
+	local _ownerID = OwnerID();
+	SetModeEx( _ownerID , EM_SetModeType_Strikback , false );	--不會索敵	
+	--AddBuff( _ownerID , 502118 , 0 , -1 );--502118免疫控場
+end
+
+function Lua_703135_AI_Jailer_TypeB_Init()--無法控場、不吃仇恨 的類型
+	local _ownerID = OwnerID();
+	SetModeEx( _ownerID , EM_SetModeType_Strikback , false );	--不會索敵	
+	--AddBuff( _ownerID , 502118 , 0 , -1 );--502118免疫控場
+end
+
+function Lua_703135_AI_BruteCub_Init()--魯莽的庫柏 
+	local _ownerID = OwnerID();
+	BeginPlot( _ownerID , "Lua_703135_AI_BruteCub_SearchMyOwnKind" , 0 );
+
+end
+
+function Lua_703135_AI_BruteCub_SearchMyOwnKind()
+	local _ownerID = OwnerID();
+	local _ownerGUID = ReadRoleValue( _ownerID , EM_RoleValue_OrgID );
+	DebugMsg( 0 , 0 , "--Lua_703135_AI_BruteCub_SearchMyOwnKind : ".._ownerID );
+	local _thisBuff = 625468;--625468體能響應
+
+	local _rangeNpcList = nil;
+	local _npcGUID = 0;
+
+	while true do
+		_rangeNpcList = SearchRangeNPC( _ownerID , 150 );
+
+		if ( #_rangeNpcList > 0 ) then
+			for _index , _npcID in pairs( _rangeNpcList ) do--在範圍中尋找相同的NPC
+				_npcGUID = ReadRoleValue( _npcID , EM_RoleValue_OrgID );
+				if ( _npcGUID == _ownerGUID ) then
+					AddBuff( _ownerGUID , _thisBuff , 0 , -1 );--625468體能響應
+					break;
+				end
+				CancelBuff( _ownerGUID , _thisBuff );
+			end
+		else
+			CancelBuff( _ownerGUID , _thisBuff );
+		end
+
+		Sleep( 10 );
+	end
+
+
+end

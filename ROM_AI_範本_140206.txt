@@ -1,0 +1,380 @@
+--Author : K.J. Aris
+--Version : 14.02.05.
+--NPC : 108800--raid
+--Script : 703138
+
+--Note : this NPC is using as a controller
+
+local _Lua_703138_AI_GlobalVars = {};
+
+function Lua_703138_AI_Init( _inputCtrID )--controller  NPC 108705
+	DebugMsg( 0 , 0 , "--Lua_703138_AI_Init : NPC 108890       Z33-1B1  V140205 " );
+
+	--Lua_DavisDelObj( 108890 );--delete all kind , just incase --以防重複執行 將原有控制器刪除
+
+	--basics
+	local _ctrlID = _inputCtrID or OwnerID();--108890
+	local _roomID = ReadRoleValue( _ctrlID , EM_RoleValue_RoomID );--108890
+	
+	--this NPC is using as a controller
+	SetModeEx( _ctrlID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _ctrlID , EM_SetModeType_HideName , false );	--不顯示名稱
+	SetModeEx( _ctrlID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _ctrlID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _ctrlID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _ctrlID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _ctrlID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _ctrlID , EM_SetModeType_Obstruct , false );	--無阻擋效果
+
+
+	-------------------------------------------initialize settings
+	local _zoneID = ReadRoleValue( _ctrlID , EM_RoleValue_ZoneID );
+	local _difficulty = 1;
+
+	if ( _zoneID == 173 ) then
+		_difficulty = 2;
+	end
+
+	if ( _zoneID == 174 ) then
+		_difficulty = 3;
+	end
+	
+	--請依難易度順序放置
+	local _bossGUID = { 108800 };
+	local _bladeGUIDs = { 108684 , 108880 , 108886 };
+
+
+	--參數設定表
+	
+	_Lua_703138_AI_GlobalVars[ _roomID ] = {
+					_bossID = 0 , 
+					_roomID = _roomID ,
+					_ctrlID = _ctrlID ,
+					_frontDoorID = 0 , 
+					_backDoorID = 0 , 
+
+					_bossGUID = _bossGUID[ _difficulty ] ,
+					_ctrlGUID = 108705 ,--控制器ID
+					_doorGUID = 106249 , 
+
+					_flagGUID = 781403 , --781403 Z33-1_1王用旗標
+					_bossFlagPos = 1 , 
+					_frontDoorFlagPos = 2 , 
+					_backDoorFlagPos = 3 ,
+
+					ExtObj = nil , 
+					DelExtObjs = nil , 
+					
+					};
+	--唯讀資訊
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];
+
+	--產生 Boss
+	--local x,y,z,dir = DW_Location( _gConsts._flagGUID , _gConsts._bossFlagPos );
+	local _bossID = CreateObjByFlag( _gConsts._bossGUID , _gConsts._flagGUID , _gConsts._bossFlagPos , 1 );--108800
+	_Lua_703138_AI_GlobalVars[ _roomID ]._bossID = _bossID;--
+	AddToPartition( _bossID , _roomID ); 
+
+	SetModeEx( _bossID , EM_SetModeType_Obstruct , false);
+	SetModeEx( _bossID , EM_SetModeType_Fight , true );
+	SetModeEx( _bossID , EM_SetModeType_Move , true );
+	SetModeEx( _bossID , EM_SetModeType_Searchenemy , true);
+	SetModeEx( _bossID , EM_SetModeType_Strikback , true);
+
+	--產生後門
+	_Lua_703138_AI_GlobalVars[ _roomID ]._backDoorID = Lua_703138_AddDoor( _gConsts._backDoorFlagPos , _gConsts._roomID , _gConsts._doorGUID );
+	DebugMsg( 0 , 0 , "--Back Door ID : ".._Lua_703138_AI_GlobalVars[ _roomID ]._backDoorID );
+
+	--delete trigger
+	DelObj( _ctrlID );
+
+	return _roomID;
+end--function Lua_703138_AI_Init( _inputCtrID )
+
+
+function Lua_703138_AI_onFight()
+	local _bossID = OwnerID();
+	local _roomID = ReadRoleValue( _bossID , EM_RoleValue_RoomID );
+
+	DebugMsg( 0 , 0 , "--Lua_703138_AI_onFight ".._bossID.." RID : ".._roomID );
+
+	--控制器與衍伸物件
+	local _ctrlID , _AddParasite , _RemoveParasites  = Lua_703138_ExtendObjectClosure( _bossID );
+
+	local function CreateDerivativeOnBoss( _objOriID , _x , _y , _z , _dir )	--衍生物(處理招喚物 或 長出來的東西)
+		local x,y,z,dir = DW_Location( _bossID );
+		local _objID = CreateObj( _objOriID , _x or x , _y or y , _z or z , _dir or dir , 1 );
+		_AddParasite( _objID );
+		AddToPartition( _objID , _roomID );
+		return _objID;
+	end
+	
+	_Lua_703138_AI_GlobalVars[ _roomID ]._ctrlID = _ctrlID;
+	_Lua_703138_AI_GlobalVars[ _roomID ].ExtObj = CreateDerivativeOnBoss;
+	_Lua_703138_AI_GlobalVars[ _roomID ].DelExtObjs = _RemoveParasites;
+
+	DebugMsg( 0 , 0 , "--Ctrl ".._ctrlID );
+	--唯讀資訊
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];
+
+
+	--generate front door
+
+	_Lua_703138_AI_GlobalVars[ _roomID ]._frontDoorID = Lua_703138_AddDoor( _gConsts._frontDoorFlagPos , _gConsts._roomID );
+
+	BeginPlot( _ctrlID , "Lua_703138_AI_Engage" , 0 );
+
+	ScriptMessage(_bossID,0,2,"Lua_703138_AI_onFight",0);
+
+end--function Lua_703138_AI_onFight()
+
+
+function Lua_703138_AI_Engage()
+	local _roomID = ReadRoleValue( OwnerID() , EM_RoleValue_RoomID );--OwnerID在這裡指CTRLID
+	DebugMsg( 0 , 0 , "--Lua_703138_AI_Engage" );
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];
+	local _bossID = _gConsts._bossID;--_captainID
+	--local _roomID = _gConsts._roomID;
+	local _ctrlID = _gConsts._ctrlID;
+
+	--Routines Vars
+	local _clock = 0;
+	local _availableTargetPlayer = nil;--hash list
+	local _engaging = true;
+	--Routines Vars
+		--Lua_RandomPlayerFromHateList
+	
+	local _timeTick = 1;--Time Speed
+	local _miniTimeTick = _timeTick*10;--Time Speed for Sleep
+	--local _GCD = 0;--int
+
+	--local _fury_course = false;
+	
+	local _GCD = 5;
+	local _CD = {
+		_timer1 = 10 ,--每10秒出一次小怪
+		_timer2 = 15 ,--每90秒進入下一個階段
+		_timer3 = 20 ,--新階段開始之後20秒會出現解鎖符文
+		_timer4 = 25 --停止出怪過10秒後會進入下一個新階段
+		}
+
+	-----------------------------------------狂暴參數
+	--local _fury_course = false;
+	local _fury_CD = 9999999;
+
+	if ( _roomID == 172 ) then
+		_fury_CD = 480;
+	end
+
+	if ( _roomID == 173 ) then
+		_fury_CD = 360;
+	end
+	--_Lua_703126_AI_SkillCD[ _roomID ]._fury_CD = _fury_CD;
+	----------------------------END----------狂暴參數
+
+
+	DebugMsg( 0 , 0 , "--Start loop" );
+
+	while true do 
+		--------------------clock
+		Sleep( _miniTimeTick );
+		_clock = _clock + _timeTick;
+		--------------END---clock
+		--DebugMsg( 0 , 0 , "--Clock : ".._clock );
+
+		--------------------Routines
+		--_availableTargetPlayer = LUA_YOYO_RangePlayerNotGM_EX( _bossID , _gConsts._effectiveRange , true ); --抓取自己距離_effectiveRange的存活玩家，排除GM--702774
+		--_engaging = #_availableTargetPlayer ~= 0;
+		_engaging = HateListCount( _bossID ) ~= 0;
+
+		_currentCompletedGameLevel = ReadRoleValue( _bossID , EM_RoleValue_Register1 );
+		--------------END---Routines
+
+		-------------------------------------------------戰鬥結束條件
+		if ( CheckID( _bossID ) == false ) or ( ReadRoleValue( _bossID , EM_RoleValue_IsDead ) == 1 ) then -- boss 死亡時 挑戰成功
+			DebugMsg(0,0,"------Boss is dead !!  ".._bossID );
+			Lua_703138_AI_Conquered( _roomID );
+			break;
+		end
+
+		if ( not _engaging ) then--都沒有存活玩家時 任務失敗
+			DebugMsg( 0 , 0 , "--quit fight" );
+			--Lua_703138_SweepAllRelativeBuff( _bossID , _gConsts._effectiveRange + 1000 , _gConsts._keyBuffs );--清除區域玩家所有相關BUFF
+			Lua_703138_AI_Reset( _roomID );
+			break;
+		end
+		-------------------------------------END--------戰鬥結束條件
+
+
+		-------------------------------------------------Timers
+		if ( _GCD > 0 ) then _GCD = _GCD - _timeTick; end
+
+		for _key , _value in pairs( _CD ) do
+			--DebugMsg( 0 , 0 , "-- : ".._key.." __ ".. _value );
+			if ( _CD[ _key ] > 0 ) then _CD[ _key ] = _value - _timeTick; end
+		end
+		---------------------------------------END-------Timers
+
+
+		--狂暴機制
+		if ( _clock >= _fury_CD and (fury_course == false) ) then
+				fury_course = true;
+				--AddBuff( _bossID , 625441 , 0 , -1 );-- 625441 忘卻幽影
+				DebugMsg( 0 , 0 , "-----狂狂暴----" );
+				ScriptMessage(_bossID,0,2,"fury_course",0);
+		end		
+
+	
+		--技能 機制
+		for i = 1 , 1 , 1 do--switch case simulation	--模擬 switch case 
+			if ( _GCD > 0 ) then break; end	--當GCD鎖住時不執行	--GCD用來防止招式被吃掉
+
+			
+			if( _CD._timer1 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer1 release" );
+				_CD._timer1 = 10;
+				_GCD = 2;
+			end
+
+			if( _CD._timer2 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer2 release" );
+				_CD._timer2 = 15;
+				_GCD = 2;
+			end
+
+			if( _CD._timer3 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer3 release" );
+				_CD._timer3 = 20;
+				_GCD = 2;
+			end
+
+			if( _CD._timer4 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer4 release" );
+				_CD._timer4 = 25;
+				_GCD = 2;
+			end
+			
+		end
+
+
+	end--while
+	DebugMsg( 0 , 0 , "--Out of loop" );
+	
+end--function Lua_703138_AI_Engage()
+
+--++++++++++++++++++++++++++++++++++++++++++++++++++++++++++functions with shared values
+function Lua_703138_AI_Reset( _roomID )
+	DebugMsg( 0 , 0 , "--Lua_703138_AI_Reset" );
+
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];
+	
+	local _bossID = _gConsts._bossID;
+	local _roomID = _gConsts._roomID;
+	--local _ctrlID = _gConsts._ctrlID;
+	local _frontDoorID = _gConsts._frontDoorID;
+
+	ScriptMessage(_bossID,0,2,"[$MUTE]".."Lua_703138_AI_Reset",0);
+
+	DW_UnFight( _bossID , true );
+	Sleep( 20 );
+
+	Delobj( _frontDoorID );	--刪除前門
+	DelFromPartition( _bossID );
+	
+	--_Lua_703138_AI_GlobalVars[ _roomID ] = nil;	--clear all values
+
+	Sleep( 50 );
+
+	DW_UnFight( _bossID , false );
+	SetPosByFlag( _bossID , _gConsts._flagGUID , _gConsts._bossFlagPos );
+	AddToPartition( _bossID , _roomID );
+
+	_gConsts.DelExtObjs();--clear all extend items
+	
+end--function Lua_703138_AI_Reset( _roomID )
+
+function Lua_703138_AI_Conquered( _roomID )
+	DebugMsg( 0 , 0 , "--Lua_703138_AI_Conquered" );
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];--for read
+
+	Delobj( _gConsts._frontDoorID );	--刪除前門
+	Delobj( _gConsts._backDoorID );	--刪除後門
+
+	ScriptMessage(_gConsts._bossID,0,2,"[$MUTE]".."Lua_703138_AI_Conquered",0);	
+	
+	_gConsts.DelExtObjs();	--clear all extend items
+	_Lua_703138_AI_GlobalVars[ _roomID ] = nil;	--clear all values
+	
+end--function Lua_703138_AI_Conquered( _roomID )
+
+
+
+-----------------------------------sub functions
+function Lua_703138_AddDoor( _FlagPos , _roomID , _inputDoorGUID )
+	--DebugMsg(0,0,"--Lua_703138_AddDoor  ".._FlagPos.." : ".._roomID.." : ".._inputDoorGUID );
+	local _gConsts = _Lua_703138_AI_GlobalVars[ _roomID ];
+	local _bossID = _gConsts._bossID;
+	local _roomID = _gConsts._roomID;
+	local _flagGUID = _gConsts._flagGUID;
+	local _doorGUID = _inputDoorGUID or _gConsts._doorGUID;
+	local _doorID = CreateObjByFlag( _doorGUID , _flagGUID , _FlagPos , 1 );
+	SetModeEx( _doorID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _doorID , EM_SetModeType_HideName , true );	--不顯示名稱
+	SetModeEx( _doorID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _doorID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _doorID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _doorID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _doorID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _doorID , EM_SetModeType_Obstruct , true );	--有阻擋效果
+	AddToPartition( _doorID , _roomID );
+	return _doorID;
+end--function Lua_703138_AddDoor( _FlagPos , _roomID )
+
+
+------------------------------------------------------------------------------------------------------Extend Objects
+function Lua_703138_ExtendObjectClosure( _hostID )--Caution : this is a closure pack !!
+	DebugMsg( 0 , 0 , "----Lua_703138_ExtendObjectClosure : ".._hostID );
+	local _parasitesList = {};
+	local _deleteAll = false;
+
+	local _roomID = ReadRoleValue( _hostID , EM_RoleValue_RoomID );
+	local x,y,z,dir = DW_Location( _hostID );
+
+	local _ctrlID = CreateObj( 110987 , x , y , z , dir , 1 );
+	SetModeEx( _ctrlID , EM_SetModeType_Show , false );
+	SetModeEx( _ctrlID , EM_SetModeType_Mark , false );
+	SetModeEx( _ctrlID , EM_SetModeType_ShowRoleHead , false );
+
+	SetModeEx( _ctrlID , EM_SetModeType_HideName , true );	--顯示名稱
+	SetModeEx( _ctrlID , EM_SetModeType_NotShowHPMP , false );	--顯示血條
+	SetModeEx( _ctrlID , EM_SetModeType_Strikback , false );	--會反擊
+	SetModeEx( _ctrlID , EM_SetModeType_Move , false );		--移動
+	SetModeEx( _ctrlID , EM_SetModeType_Fight , false );	--攻擊
+	SetModeEx( _ctrlID , EM_SetModeType_Searchenemy , false );	--索敵
+	SetModeEx( _ctrlID , EM_SetModeType_Obstruct , false );	--有阻擋效果
+	DW_UnFight( _ctrlID , false );
+	Lua_ObjDontTouch( _ctrlID , false );
+	AddToPartition( _ctrlID , _roomID );
+
+	local function AddParasite( _parasiteID )--closure
+		table.insert( _parasitesList , _parasiteID );
+	end		
+	
+	local function RemoveAll()
+		--kill all parasites if the host doesn't exist 
+		DebugMsg( 0 , 0 , "---------------Destroy all parasites. "..#_parasitesList );
+		for i = 1 , #_parasitesList , 1 do
+			DelObj( _parasitesList[ i ] );
+			DebugMsg( 0 , 0 , "----Destroy parasite ".._parasitesList[ i ] );
+		end
+		DelObj( _ctrlID );
+		DebugMsg( 0 , 0 , "----Destroy Controller ".._ctrlID );
+		--_parasitesList = nil;
+	end
+
+	return _ctrlID , AddParasite , RemoveAll;
+end--Lua_703138_ExtendObjectClosure( _hostID )
+
+----------------------------------------------------------------------------------------END-----------Extend Objects
+
+

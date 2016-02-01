@@ -1,0 +1,644 @@
+--Author : K.J. Aris
+--Version : 14.02.25.
+--Ignitor : 108909
+--NPC : 108909--raid
+--Script : 703147
+
+local _Lua_703147_AI_GlobalVars = {};
+
+function Lua_703147_AI_Init( _inputCtrID )--controller  NPC 108909 --Note : this NPC is using as a ignitor
+	DebugMsg( 0 , 0 , "--Lua_703147_AI_Init : NPC 108909       Z33-2B2  V140225 " );
+
+	--Lua_DavisDelObj( 108890 );--delete all kind , just incase --以防重複執行 將原有控制器刪除
+
+	--basics
+	local _ctrlID = _inputCtrID or OwnerID();--108909
+	local _roomID = ReadRoleValue( _ctrlID , EM_RoleValue_RoomID );--108814
+	
+	--this NPC is using as a controller
+	SetModeEx( _ctrlID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _ctrlID , EM_SetModeType_HideName , false );	--不顯示名稱
+	SetModeEx( _ctrlID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _ctrlID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _ctrlID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _ctrlID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _ctrlID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _ctrlID , EM_SetModeType_Obstruct , false );	--無阻擋效果
+
+	-------------------------------------------initialize settings
+	local _zoneID = ReadRoleValue( _ctrlID , EM_RoleValue_ZoneID );
+	local _difficulty = 1;
+	local _frenzyCD = 9999999;--狂暴參數
+
+	if ( _zoneID == 176 ) then
+		_difficulty = 2;
+		_frenzyCD = 480;
+	end
+
+	if ( _zoneID == 177 ) then
+		_difficulty = 3;
+		_frenzyCD = 360;
+	end
+	
+	--請依難易度順序放置
+	local _bossCornowaGUIDs = { 108825 , 103769 , 103771 };--科諾瓦
+	local _bossOsokenGUIDs = { 108826 , 103770 , 103772 };--奧索肯
+	local _ballOfSoulGUIDs = { 109069 , 109070 , 109071 };--靈魂之球
+
+	local _treasureBoxGUIDs = { 106289 , 108835 , 108836 };--實驗虛寶
+
+	--參數設定表	
+	_Lua_703147_AI_GlobalVars[ _roomID ] = {
+					_bossID = 0 , 
+					_roomID = _roomID ,
+					_ctrlID = _ctrlID ,
+					_frontDoorID = 0 , 
+					_backDoorID = 0 , 
+
+					_bossVOs = {
+						_Osoken = {
+							_id = 0 ,
+							_guid = _bossOsokenGUIDs[ _difficulty ] ,
+							_flagPos = 1 , 
+							IndiSpec = Lua_703147_AI_IndividualSpec_Osoken
+							} , 
+
+						_Cornowa = {
+							_id = 0 ,
+							_guid = _bossCornowaGUIDs[ _difficulty ] ,
+							_flagPos = 2 , 
+							IndiSpec = Lua_703147_AI_IndividualSpec_Cornowar
+							} , 
+						} , 
+
+					_ballOfSoulGUID = _ballOfSoulGUIDs[ _difficulty ] ,
+
+					_ctrlGUID = 108705 ,--控制器ID
+					_doorGUID = 106012 , 
+					_treasureBoxGUID = _treasureBoxGUIDs[ _difficulty ] ,--實驗虛寶
+
+					_phase2BuffGUID = 625553,--625553戰鬥第二階段的標示BUFF
+
+					_flagGUID = 781416 , --781416 Z33-2_2王用旗標
+
+					_frontDoorFlagPos = 3 , 
+					_backDoorFlagPos = 4 ,
+
+					ExtObj = nil , 
+					DelExtObjs = nil , 
+
+					_frenzyCD = _frenzyCD ,
+--					_skillAeCD = 30 , --每30秒會對場上所有人施放負面狀態，單數的玩家施放「巫毒漩渦」、複數的玩家為「闇影纏繞」
+--					_skillBladeCD = 15 , --迴旋大砍刀CD
+--					_skillIronBloodCD = 21 , --鐵血狂傲CD
+--					_skillChargeCD = 1 , --衝鋒CD
+--					_skillChaosConvolutionCD = 9 , --暴亂迴旋CD
+--
+--					_skillThrowCD = 3 , --巫毒巨砍刀  電流圖騰CD
+					};
+	--唯讀資訊
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+
+	--產生 Boss
+	local _bossID = 0;
+	for _bossName , _bossVO in pairs( _gConsts._bossVOs ) do
+		_bossID = Lua_703147_GenerateBoss( _bossVO , _roomID );
+		_gConsts._bossVOs[_bossName]._id = _bossID;--_Cornowa
+	end
+	_gConsts._bossID = _bossID;--presiding boss 
+
+	--產生後門
+	_gConsts._backDoorID = Lua_703182_AddDoor( _gConsts._doorGUID , _gConsts._flagGUID , _gConsts._backDoorFlagPos , _gConsts._roomID );
+	DebugMsg( 0 , 0 , "--Back Door ID : ".._gConsts._backDoorID );
+
+	--delete trigger
+	DelObj( _ctrlID );
+
+	return _roomID;
+end--function Lua_703147_AI_Init( _inputCtrID )
+
+function Lua_703147_ClearAll()--for test
+	DebugMsg( 0 , 0 , "--Lua_703147_ClearAll : all values will be cleared , reinit this by redeploying NPC 108909" );--
+	if ( _Lua_703147_AI_GlobalVars ~= nil ) then
+		for _roomID , _valuePack in pairs( _Lua_703147_AI_GlobalVars ) do
+			if ( _valuePack.DelExtObjs ~= nil ) then
+				_valuePack.DelExtObjs();
+			end
+
+			for _bossName , _bossVO in pairs( _valuePack._bossVOs ) do
+				DelObj( _bossVO._id );
+			end
+			DelObj( _valuePack._ctrlID );
+			DelObj( _valuePack._frontDoorID );
+			DelObj( _valuePack._backDoorID );
+			_Lua_703147_AI_GlobalVars[ _roomID ] = nil;
+		end
+	end
+end--function Lua_703147_ClearAll()
+
+function Lua_703147_GenerateBoss( _bossVO , _roomID )
+	Lua_DavisDelObj( _bossVO._guid );
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+	local _bossID = CreateObjByFlag( _bossVO._guid , _gConsts._flagGUID , _bossVO._flagPos , 1 );
+	AddToPartition( _bossID , _roomID ); 
+
+	SetModeEx( _bossID , EM_SetModeType_Obstruct , false );
+	SetModeEx( _bossID , EM_SetModeType_Fight , true );
+	SetModeEx( _bossID , EM_SetModeType_Move , true );
+	SetModeEx( _bossID , EM_SetModeType_Searchenemy , true );
+	SetModeEx( _bossID , EM_SetModeType_Strikback , true );
+
+	return _bossID;
+end--function Lua_703147_GenerateBoss( _bossVO )
+
+function Lua_703147_CornowaInitSetting()--on NPC 108818
+	local _ownerID = OwnerID();
+	DebugMsg( 0 , 0 , "--Lua_703147_CornowaInitSetting ".._ownerID );
+	AddBuff( _ownerID , 625549 , 0 , -1 );--鎖MP SP回復
+	WriteRoleValue( _ownerID , EM_RoleValue_MaxMP , 100 );
+	WriteRoleValue( _ownerID , EM_RoleValue_MP , 0 );--SP歸0
+
+	--Cl_Resist_HackersBossNum();
+end
+
+function Lua_703147_AI_reignite( _specRoomID )--for test
+	DebugMsg( 0 , 0 , "--Lua_703175_AI_reignite " );
+	local _roomID = _specRoomID or ReadRoleValue( OwnerID() , EM_RoleValue_RoomID );
+	Lua_703147_ClearAll();
+	Lua_703147_AI_Init();
+end
+
+function Lua_703147_AI_onFight()--_Cornowa
+	local _bossID = OwnerID();
+	local _roomID = ReadRoleValue( _bossID , EM_RoleValue_RoomID );
+
+	DebugMsg( 0 , 0 , "--Lua_703147_AI_onFight ".._bossID.." RID : ".._roomID );
+
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+	if ( _gConsts == nil ) then Lua_703147_AI_reignite( _roomID ); return; end
+
+	if ( CheckID( _gConsts._ctrlID ) == true and ( ReadRoleValue( _gConsts._ctrlID , EM_RoleValue_Register1 ) == 1) ) then--當上一次循環的控制器還在作動時則不動作  (防止_Schulize重生時重複觸發戰鬥)
+		DebugMsg( 0 , _roomID , "--Combat Sequence Duplicated : New Sequence Rejected !!" );--presiding boss may revived or rejoin the fight while combat is not over yet
+		return;
+	end
+	--控制器與衍伸物件
+	local _ctrlID , _AddParasite , _RemoveParasites  = Lua_703182_ExtendObjectClosure( _bossID );
+
+	local function CreateDerivativeOnBoss( _objOriID , _x , _y , _z , _dir )	--衍生物(處理招喚物 或 長出來的東西)
+		local x,y,z,dir = DW_Location( _bossID );
+		local _objID = CreateObj( _objOriID , _x or x , _y or y , _z or z , _dir or dir , 1 );
+		_AddParasite( _objID );
+		AddToPartition( _objID , _roomID );
+		return _objID;
+	end
+	
+	WriteRoleValue( _ctrlID , EM_RoleValue_Register1 , 1 );--控制器戰鬥MARK	0 = 非戰鬥 , 1 = 戰鬥中
+	_gConsts._ctrlID = _ctrlID;
+	_gConsts.ExtObj = CreateDerivativeOnBoss;
+	_gConsts.DelExtObjs = _RemoveParasites;
+
+	DebugMsg( 0 , 0 , "--Ctrl ".._ctrlID );
+	--唯讀資訊
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+
+	--generate front door
+	_gConsts._frontDoorID = Lua_703182_AddDoor( _gConsts._doorGUID , _gConsts._flagGUID , _gConsts._frontDoorFlagPos , _gConsts._roomID );
+
+	BeginPlot( _ctrlID , "Lua_703147_AI_Engage" , 0 );
+
+	ScriptMessage(_bossID,0,2,"[Lua_703147_AI_OnFight]",0);
+	--CallPlot( _bossID , "Cl_Resist_HackersFightBegin" );
+end--function Lua_703147_AI_onFight()
+
+function Lua_703147_AI_Engage()
+	local _roomID = ReadRoleValue( OwnerID() , EM_RoleValue_RoomID );--OwnerID在這裡指CTRLID
+	DebugMsg( 0 , 0 , "--Lua_703147_AI_Engage" );
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+	local _bossID = _gConsts._ctrlID;--_gConsts._bossID;--there's no guarantee that presiding boss is always alive
+	local _bossVOs = _gConsts._bossVOs;--there's 2 bosses in there
+	local _ctrlID = _gConsts._ctrlID;
+
+	local _bossOsokenID = _bossVOs._Osoken._id;
+	local _bossCornowaID = _bossVOs._Cornowa._id;
+
+	local _phase2BuffGUID = _gConsts._phase2BuffGUID;
+	--Routines Vars
+	local _clock = 0;
+
+	local _engaging = true;
+	local _allBossAreDead = false;
+	--Routines Vars
+		--Lua_RandomPlayerFromHateList
+	
+	local _timeTick = 1;--Time Speed
+	local _miniTimeTick = _timeTick*10;--Time Speed for Sleep
+	
+	local _GCD = 5;
+	local _CD = {
+--		_skillAeCD = _gConsts._skillAeCD ,
+--		_skillBladeCD = _gConsts._skillBladeCD ,
+--		_skillChaosConvolutionCD = _gConsts._skillChaosConvolutionCD ,
+--		_skillChargeCD = _gConsts._skillChargeCD ,
+--		_skillIronBloodCD = _gConsts._skillIronBloodCD ,
+--		_skillThrowCD = _gConsts._skillThrowCD ,
+		}
+
+	-----------------------------------------狂暴參數
+	local _isFrenzied = false;
+	local _frenzyCD = _gConsts._frenzyCD;
+	----------------------------END----------狂暴參數
+
+	DebugMsg( 0 , 0 , "--Start loop" );
+	while true do 
+		--------------------clock
+		Sleep( _miniTimeTick );
+		_clock = _clock + _timeTick;
+		--DebugMsg( 0 , 0 , "--Clock : ".._clock );
+		--------------END---clock
+
+		--------------------Routines
+		--------------END---Routines
+
+		-------------------------------------------------戰鬥結束條件
+		_allBossAreDead = true;--假設所有BOSS皆陣亡
+		_engaging = false;--假設所有BOSS都脫離戰鬥
+		for _bossName , _bossVO in pairs( _bossVOs ) do--檢查Boss有沒有通通活蹦亂跳
+			_currentBossID = _bossVO._id;
+			if ( CheckID( _currentBossID ) == true ) and ( ReadRoleValue( _currentBossID , EM_RoleValue_IsDead ) ~= 1 ) then--當有任一BOSS存活時 代表還未全死
+				_allBossAreDead = false;
+				_bossVO.IndiSpec( _bossVO , _clock );--趁還活著的時候  順便執行個別的特殊流程
+				if( ReadRoleValue( _currentBossID , EM_RoleValue_AttackTargetID ) ~= 0 ) then--當有任一BOSS仍在戰鬥 代表還有玩家存活 
+					--DebugMsg(0,0,_currentBossID.." 正在追殺玩家 : "..ReadRoleValue( _currentBossID , EM_RoleValue_AttackTargetID ) );
+					_engaging = true;
+				end	
+			else
+				--DebugMsg( 0 , 0 , "------dead boss : ".._bossName );
+				--有BOSS死了  順便設定亡者復活CD
+
+			end
+		end
+
+		if ( _allBossAreDead == true ) then-- boss 全部死亡時 挑戰成功
+			DebugMsg(0,0,"------Bosses are dead !!  "..tostring(_allBossAreDead) );
+			Lua_703147_AI_Conquered( _roomID );
+			break;
+		end
+
+		if ( not _engaging ) then--都沒有存活玩家時 任務失敗
+			DebugMsg( 0 , 0 , "--all players are gone , quit fighting "..tostring(_engaging) );
+			--Lua_703147_SweepAllRelativeBuff( _bossID , _gConsts._effectiveRange + 1000 , _gConsts._keyBuffs );--清除區域玩家所有相關BUFF
+			Lua_703147_AI_Reset( _roomID );
+			break;
+		end
+		-------------------------------------END--------戰鬥結束條件
+
+		-------------------------------------------------Timers
+		if ( _GCD > 0 ) then _GCD = _GCD - _timeTick; end
+
+		for _key , _value in pairs( _CD ) do
+			--DebugMsg( 0 , 0 , "-- : ".._key.." __ ".. _value );
+			if ( _CD[ _key ] > 0 ) then _CD[ _key ] = _value - _timeTick; end
+		end
+		---------------------------------------END-------Timers
+
+		--狂暴機制
+		if ( _clock >= _frenzyCD and (_isFrenzied == false) ) then
+				_isFrenzied = true;
+				for _bossName , _bossVO in pairs( _bossVOs ) do
+					_currentBossID = _bossVO._id;
+					AddBuff( _currentBossID , 625849 , 0 , -1 );-- 625849 神棄
+				end
+				
+				DebugMsg( 0 , 0 , "-----狂狂暴----" );
+				ScriptMessage( _bossID , 0 , 2 , "[Lua_703147_AI_Frenzy]" , 0 );
+		end		
+
+		---------------------------------------------------階段轉換
+		-- 當科諾瓦被擊殺或是奧索肯HP低於40%時進入第二階段。
+		if ( CheckBuff( _bossOsokenID , _phase2BuffGUID ) == false ) then--當未進入第二階段時才判定
+			if ( CheckID( _bossCornowaID ) == false or ReadRoleValue( _bossCornowaID , EM_RoleValue_IsDead ) == 1 ) or	
+			( CheckID( _bossOsokenID ) == true and ReadRoleValue( _bossOsokenID , EM_RoleValue_HP )/ReadRoleValue( _bossOsokenID , EM_RoleValue_MaxHP ) < 0.4 ) then
+				--加上第二階段的Buff
+				AddBuff( _bossOsokenID , _phase2BuffGUID , 0 , -1 );
+				DebugMsg( 0 , 0 , "--第二階段" );
+				ScriptMessage( _bossID , 0 , 2 , "[Lua_703147_AI_Phase2]" , 0 );
+			end
+		end
+		-------------------------------------END---------階段轉換
+		
+		--技能 機制
+		for i = 1 , 1 , 1 do--switch case simulation	--模擬 switch case 
+			if ( _GCD > 0 ) then break; end	--當GCD鎖住時不執行	--GCD用來防止招式被吃掉
+
+
+			--[[
+			if( _CD._timer2 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer2 release" );
+				_CD._timer2 = 15;
+				_GCD = 2;
+			end
+
+			if( _CD._timer3 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer3 release" );
+				_CD._timer3 = 20;
+				_GCD = 2;
+			end
+
+			if( _CD._timer4 <= 0 )then
+				DebugMsg( 0 , 0 , "--_timer4 release" );
+				_CD._timer4 = 25;
+				_GCD = 2;
+			end
+			]]--
+			
+		end
+
+	end--while
+	DebugMsg( 0 , 0 , "--Out of loop" );
+	
+end--function Lua_703147_AI_Engage()
+
+--++++++++++++++++++++++++++++++++++++++++++++++++++++++++++functions with shared values
+function Lua_703147_AI_Reset( _roomID )
+	DebugMsg( 0 , 0 , "--Lua_703147_AI_Reset" );
+
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+	
+	local _bossVOs = _gConsts._bossVOs;
+	local _roomID = _gConsts._roomID;
+	--local _ctrlID = _gConsts._ctrlID;
+	local _frontDoorID = _gConsts._frontDoorID;
+
+	WriteRoleValue( _gConsts._ctrlID , EM_RoleValue_Register1 , 0 );--控制器戰鬥MARK	0 = 非戰鬥 , 1 = 戰鬥中
+	ScriptMessage(_gConsts._ctrlID,0,2,"[$MUTE]".."[Lua_703147_AI_Reset]",0);
+
+	Delobj( _frontDoorID );	--刪除前門
+	_gConsts.DelExtObjs();--clear all extend items
+
+	Sleep( 10 );
+	local _bossID = 0;
+	for _bossName , _bossVO in pairs( _bossVOs ) do--關閉戰鬥
+		_bossID = _bossVO._id;
+		DW_UnFight( _bossID , true );
+		DelObj( _bossID );
+	end
+	Sleep( 10 );
+
+	Delobj( _frontDoorID );	--刪除前門
+	
+	--_Lua_703147_AI_GlobalVars[ _roomID ] = nil;	--clear all values
+
+	Sleep( 30 );
+	
+	for _bossName , _bossVO in pairs( _bossVOs ) do--開啟戰鬥
+		_bossID = _bossVO._id;
+		DW_UnFight( _bossID , false );
+		_gConsts._bossVOs[_bossName]._id = Lua_703147_GenerateBoss( _bossVO , _roomID );--重生對應的BOSS
+	end
+
+end--function Lua_703147_AI_Reset( _roomID )
+
+function Lua_703147_AI_Conquered( _roomID )
+	_roomID = _roomID or ReadRoleValue( OwnerID() , EM_RoleValue_RoomID );
+	DebugMsg( 0 , 0 , "--Lua_703147_AI_Conquered" );
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];--for read
+	
+	if( _gConsts == nil ) then return; end
+	WriteRoleValue( _gConsts._ctrlID , EM_RoleValue_Register1 , 0 );--控制器戰鬥MARK	0 = 非戰鬥 , 1 = 戰鬥中
+
+	Delobj( _gConsts._frontDoorID );	--刪除前門
+	Delobj( _gConsts._backDoorID );	--刪除後門
+
+	ScriptMessage( _gConsts._bossID , 0 , 2 , "[$MUTE]".."[Lua_703147_AI_Conquered]" , 0 );	
+	
+	--寶箱
+	local x,y,z,dir = DW_Location( _gConsts._ctrlID );
+	local _loot  = WY_Create_an_obj( _gConsts._treasureBoxGUID , x,y,z,dir );
+
+	SetModeEx( _loot , EM_SetModeType_ShowRoleHead , false );
+	
+	SetModeEx( _loot , EM_SetModeType_Mark , true );	--不可點選
+	SetModeEx( _loot , EM_SetModeType_HideName , true );	--不顯示名稱
+	SetModeEx( _loot , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _loot , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _loot , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _loot , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _loot , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _loot , EM_SetModeType_Obstruct , true );	--有阻擋效果
+
+	if( _gConsts.DelExtObjs ~= nil ) then _gConsts.DelExtObjs() end;	--clear all extend items
+	_Lua_703147_AI_GlobalVars[ _roomID ] = nil;	--clear all values
+	--Cl_Resist_HackersBossDead();
+end--function Lua_703147_AI_Conquered( _roomID )
+
+-----------------------------------sub functions
+
+
+------------------------------------------------------------------------------------------------個別王的特殊處理程序	在MAINLOOP執行時被掃描
+function Lua_703147_AI_IndividualSpec_Osoken( _bossOsokenVO , _clock )-- _Osoken
+	--local _bossID = _bossOsokenVO._id;
+end
+
+function Lua_703147_AI_IndividualSpec_Cornowar( _bossCornowaVO , _clock )-- _Cornowa
+	local _bossID = _bossCornowaVO._id;
+	local _spRatio = ReadRoleValue( _bossID , EM_RoleValue_MP )/ReadRoleValue( _bossID , EM_RoleValue_MaxMP );
+
+	
+	if ( _spRatio <= 0  ) then--能量不足   
+		local _roomID = ReadRoleValue( _bossID , EM_RoleValue_RoomID );
+		local _gConsts = _Lua_703147_AI_GlobalVars[_roomID];
+		local _osokenID = _gConsts._bossVOs._Osoken._id;
+		AddBuff( _bossID , 625566 , 0 , -1 );--625566充能請求
+		AddBuff( _osokenID , 625566 , 0 , -1 );--625566充能請求
+	end
+
+	--當精力值超過100% 施展 --851890靈值重荷
+	if ( _spRatio >= 1.0  ) then
+		AddBuff( _bossID , 625550 , 0 , -1 );--625550處以極刑施放印記 --回收再利用真環保
+		--return;
+	end
+
+	local _rangePlayer = LUA_YOYO_RangePlayerNotGM_EX( _bossID , 50 , true );--怪力碎擊
+	if ( #_rangePlayer >= 1 ) then--當身邊聚集4個（含）以上的玩家時施放，法術傷害，並且消耗65精力。
+		AddBuff( _bossID , 625551 , 0 , -1 );--625551殘忍王儲敕令施放印記 ----回收再利用真環保
+	end
+end
+------------------------------------------------------------------------------------END---------個別王的特殊處理程序
+
+
+------------------------------------------------------------------------------------------以下是技能
+------------------------------------------------------------------------------Osoken
+function Lua_703147_Skill_EnergyCharge()--充能
+	local _ownerID = OwnerID();-- _Osoken
+	local _targetID = TargetID();--_Cornowa
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_EnergyCharge : ".._ownerID.." : ".._targetID );
+	
+	local _roomID = ReadRoleValue( _ownerID , EM_RoleValue_RoomID );
+	local _gConsts = _Lua_703147_AI_GlobalVars[_roomID];
+	local _cornowaID = _gConsts._bossVOs._Cornowa._id;
+	_targetID = _cornowaID;
+
+	local _currentSP = ReadRoleValue( _targetID , EM_RoleValue_MP );--SP
+	_currentSP = _currentSP + ReadRoleValue( _targetID , EM_RoleValue_MaxMP )*0.6;--回復10精力
+	WriteRoleValue( _targetID , EM_RoleValue_MP , _currentSP );--SP+10 
+
+	CancelBuff_NoEvent( _ownerID , 625566 );
+	CancelBuff_NoEvent( _targetID , 625566 );
+	ScriptMessage( _ownerID , 0 , 2 , "[$MUTE]".."[Lua_703147_AI_Energizing]" , 0 );	
+	return true;
+end
+
+function Lua_703147_Skill_DeadSpiritImpact()--死靈衝擊
+	local _ownerID = OwnerID();
+	local _targetID = TargetID();
+	--DebugMsg( 0 , 0 , "--Lua_703147_Skill_DeadSpiritImpact : ".._targetID );
+	local _roomID = ReadRoleValue( _targetID , EM_RoleValue_RoomID );
+	
+	local _targetGUID = ReadRoleValue( _targetID , EM_RoleValue_OrgID );
+
+	local _gConsts = _Lua_703147_AI_GlobalVars[_roomID];
+	if ( _targetGUID == _gConsts._bossVOs._Cornowa._guid ) then
+		local _currentSP = ReadRoleValue( _targetID , EM_RoleValue_MP );--SP
+
+		_currentSP = _currentSP + 20;--回復20精力
+		WriteRoleValue( _targetID , EM_RoleValue_MP , _currentSP );--SP+20 
+	end
+
+	return true;
+end
+
+function Lua_703147_Skill_DarkShadow()--暗影傷害執行劇情
+	local _ownerID = OwnerID();
+	local _targetID = TargetID();
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_DarkShadow : ".._ownerID.." : ".._targetID );
+	local _roomID = ReadRoleValue( _targetID , EM_RoleValue_RoomID );
+	local _gConsts = _Lua_703147_AI_GlobalVars[_roomID];
+
+	local _bossOsokenID = _gConsts._bossVOs._Osoken._id;
+	SysCastSpellLv( _bossOsokenID , _bossOsokenID , 851905 , 0 );--851905暗影傷害
+
+end
+
+function Lua_703147_Skill_EvilSoul()--邪祟奪魄執行劇情
+	local _ownerID = OwnerID();
+	local _targetID = TargetID();
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_EvilSoul : ".._ownerID.." : ".._targetID );
+	local _rangePlayerList = LUA_YOYO_RangePlayerNotGM_EX( _ownerID , 500 , true );
+	local _maxTarget = 2;
+	local _zoneID = ReadRoleValue( _ownerID , EM_RoleValue_ZoneID );
+	if ( _zoneID == 175 ) then _maxTarget = 4; end--隨機4名玩家	普通、簡易版：2名
+
+	local _targetList = Lua_703146_RandomFromList( _rangePlayerList , 4 );
+
+	for _index , _playerID in pairs( _targetList ) do
+		DebugMsg( 0 , 0 , "------vistim :  ".._playerID );
+		AddBuff( _playerID , 625827 , 0 , -1 );--625827邪祟奪魄
+	end
+end
+
+function Lua_703147_Skill_DeadlyJudgement()--斷魂裁決‧審判 執行劇情
+	local _ownerID = OwnerID();
+	local _targetID = TargetID();
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_DeadlyJudgement : ".._ownerID.." : ".._targetID );
+	local x,y,z,dir = DW_Location( _targetID );
+
+	SysCastSpellLv_Pos( _ownerID , x,y,z , 851907 , 1 );--851907斷魂裁決‧審判 傷害
+
+	ScriptMessage( _ownerID , 0 , 2 , "[Lua_703147_AI_DeadlyJudgement]" , 0 );
+end
+
+function Lua_703147_Skill_SoulBall()--靈魂之球 執行劇情
+	local _ownerID = OwnerID();--Osoken
+	local _targetID = TargetID();--Osoken
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_SoulBall : ".._ownerID.." : ".._targetID );
+	local _roomID = ReadRoleValue( _ownerID , EM_RoleValue_RoomID );
+
+	--製造光球
+	local _gConsts = _Lua_703147_AI_GlobalVars[ _roomID ];
+	local _ballOfSoulGUID = _gConsts._ballOfSoulGUID;
+	local x,y,z,dir = DW_Location( _ownerID );
+	
+	x = x + ( RandRange( 1 , 60 ) - 30 );
+	z = z + ( RandRange( 1 , 60 ) - 30 );
+
+	local _ballOfSoulID = _gConsts.ExtObj( _ballOfSoulGUID , x,y,z,dir );
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Mark , false );	--不可點選
+	SetModeEx( _ballOfSoulID , EM_SetModeType_HideName , false );	--不顯示名稱
+	SetModeEx( _ballOfSoulID , EM_SetModeType_NotShowHPMP , false );	--不顯示血條
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Strikback , false );	--不會反擊
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Move , false );	--不會移動
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Fight , false );	--不可攻擊
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Searchenemy , false );	--不會索敵
+	SetModeEx( _ballOfSoulID , EM_SetModeType_Obstruct , false );	--無阻擋效果
+	--SetModeEx( _ballOfSoulID , EM_SetModeType_Gravity , false );
+	--SetModeEx( _dummyID , EM_SetModeType_Show , false );	
+	WriteRoleValue( _ballOfSoulID , EM_RoleValue_LiveTime , 15 );
+
+	CallPlot( _ballOfSoulID , "Lua_703147_Item_SoulBall_Spec" , _ownerID );
+end
+
+function Lua_703147_Item_SoulBall_Spec( _masterID )--靈魂之球 NPC --_masterID 球擁有者ID
+	local _ownerID = OwnerID();--soul ball
+	local _range = 60;
+	local _rangeNpcList = nil;
+	while true do
+		_rangeNpcList = SearchRangeNPC( _ownerID , _range );
+		for _index , _npcID in pairs( _rangeNpcList ) do
+			--當自己的靈魂之球範圍60碼內有其他靈魂之球，則產生「靈質爆發」。
+			if ( ReadRoleValue( _npcID , EM_RoleValue_OrgID ) == ReadRoleValue( _ownerID , EM_RoleValue_OrgID ) ) then
+				--每次爆發使該靈魂之球多吸取主人5%生命上限。
+				--local _currentMaxHP = ReadRoleValue( _masterID , EM_RoleValue_MaxHP );
+				--_currentMaxHP = _currentMaxHP*0.95;
+				--WriteRoleValue( _masterID , EM_RoleValue_MaxHP , _currentMaxHP );
+				AddBuff( _masterID , 625830 , 0 , 15 );--讓MaxHP-5%的BUFF堆疊上去 --625830靈魂之球負面效果
+				CastSpell( _ownerID , _ownerID , 851903 );
+			end
+		end
+
+		sleep( 10 );
+	end
+end
+-----------------------------------------------------------------------------------Cornowa
+function Lua_703147_Skill_SoulGravity_End()--靈值重荷
+	local _ownerID = OwnerID();
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_SoulGravity_End : ".._ownerID );
+	CancelBuff_NoEvent( _ownerID , 625550 );
+	return true;
+end
+
+function Lua_703147_Skill_SoulSmash()--	_Cornowa --奪魄打擊
+	--物理傷害，並回復10精力，若造成傷害的目標生命值高於30%，則每多10%，多回復5精力。
+	local _ownerID = OwnerID();-- _Cornowa
+	local _targetID = TargetID();--受害者
+	DebugMsg( 0 , 0 , "--Lua_703147_Skill_SoulSmash : ".._ownerID );
+	local _currentSP = ReadRoleValue( _ownerID , EM_RoleValue_MP );--SP
+	
+	local _targetHpRatio = ReadRoleValue( _targetID , EM_RoleValue_HP )/ReadRoleValue( _targetID , EM_RoleValue_MaxHP );
+	if ( _targetHpRatio >= 0.3 ) then
+		local _incresePerScale = ReadRoleValue( _targetID , EM_RoleValue_MaxMP )*0.05;--目標每多10%HP，多回復5精力
+		local _float = ( _targetHpRatio - 0.3 );--減去30%
+		_float = _float - _float%0.1;--取小數後一位
+		local _hpScale = _float/0.1;--計算間距
+		
+		_currentSP = _currentSP + _incresePerScale * _hpScale;--加總值
+	end
+
+	_currentSP = _currentSP + ReadRoleValue( _targetID , EM_RoleValue_MaxMP )*0.1;--回復10精力
+	WriteRoleValue( _ownerID , EM_RoleValue_MP , _currentSP );--SP+10 
+	return true;
+end
+
+function Lua_703147_Skill_MonsterSmash_End()--怪力碎擊
+	local _ownerID = OwnerID();
+	--DebugMsg( 0 , 0 , "--Lua_703147_Skill_MonsterSmash_End : ".._ownerID );
+	CancelBuff_NoEvent( _ownerID , 625551 );
+	return true;
+end
+
+function Lua_703147_Skill_MonsterCharge()
+	local _ownerID = OwnerID();-- _Cornowa
+	local _targetID = TargetID();
+	AddBuff( _targetID , 625564 , 0 , 2 );--625564怪力衝擊標記
+	SetAttack( _ownerID , _targetID );
+	ScriptMessage( _ownerID , 0 , 2 , "[Lua_703147_AI_MonsterCharge]" , 0 );
+end
